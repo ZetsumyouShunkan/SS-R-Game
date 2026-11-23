@@ -134,8 +134,8 @@
     <!-- Weapon Selection Screen -->
     <div id="weapon-select-overlay" class="fixed inset-0 bg-gray-900/95 overflow-y-auto z-50" style="touch-action: pan-y;">
         <div class="min-h-full flex flex-col items-center justify-start md:justify-center p-4 py-10">
-            <h1 class="text-4xl md:text-5xl font-black text-outline text-white mb-2 tracking-widest text-center">ROGUE SURVIVOR</h1>
-            <p class="text-gray-400 mb-6 text-sm md:text-base font-bold text-center">武器を選択して出撃せよ</p>
+            <h1 class="text-4xl md:text-5xl font-black text-outline text-white mb-2 tracking-widest text-center transition-colors duration-200">ROGUE SURVIVOR</h1>
+            <p id="weapon-select-subtitle" onclick="cycleFixedFirstBoss()" class="text-gray-400 mb-6 text-sm md:text-base font-bold text-center cursor-pointer select-none transition-colors duration-200 px-3 py-1 rounded">武器を選択して出撃せよ</p>
             
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 w-full max-w-6xl pb-12">
                 <!-- Weapon 1: 炎の剣 -->
@@ -1379,6 +1379,49 @@ function renderPauseMenu() {
     }
 }
 
+// 最初のボス固定時の表示色更新（タイトル＆「武器を選択して出撃せよ」の両方に反映）
+function updateFixedFirstBossVisual() {
+    const titleEl = document.querySelector('#weapon-select-overlay h1');
+    const subtitleEl = document.getElementById('weapon-select-subtitle');
+    if (fixedFirstBoss) {
+        if (titleEl) {
+            titleEl.style.color = fixedFirstBoss.color;
+            titleEl.style.textShadow = `0 0 25px ${fixedFirstBoss.color}`;
+        }
+        if (subtitleEl) {
+            subtitleEl.style.color = fixedFirstBoss.strokeColor || fixedFirstBoss.color;
+            subtitleEl.style.textShadow = `0 0 14px ${fixedFirstBoss.color}`;
+        }
+    } else {
+        if (titleEl) {
+            titleEl.style.color = '';
+            titleEl.style.textShadow = '';
+        }
+        if (subtitleEl) {
+            subtitleEl.style.color = '';
+            subtitleEl.style.textShadow = '';
+        }
+    }
+}
+
+// 「武器を選択して出撃せよ」タップで最初の出現ボスを順番に切り替え（全7体→未固定へ循環）
+function cycleFixedFirstBoss() {
+    const overlay = document.getElementById('weapon-select-overlay');
+    if (!overlay || overlay.style.display === 'none') return;
+
+    if (!fixedFirstBoss) {
+        fixedFirstBoss = BOSS_TEMPLATES[0];
+    } else {
+        const currentIndex = BOSS_TEMPLATES.findIndex(b => b.id === fixedFirstBoss.id);
+        if (currentIndex === -1 || currentIndex >= BOSS_TEMPLATES.length - 1) {
+            fixedFirstBoss = null;
+        } else {
+            fixedFirstBoss = BOSS_TEMPLATES[currentIndex + 1];
+        }
+    }
+    updateFixedFirstBossVisual();
+}
+
 // キーボード入力
 window.addEventListener('keydown', e => {
     if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
@@ -1396,11 +1439,7 @@ window.addEventListener('keydown', e => {
         if (overlay && overlay.style.display !== 'none') {
             const index = parseInt(e.key) - 1;
             fixedFirstBoss = BOSS_TEMPLATES[index];
-            const titleEl = document.querySelector('#weapon-select-overlay h1');
-            if (titleEl && fixedFirstBoss) {
-                titleEl.style.color = fixedFirstBoss.color;
-                titleEl.style.textShadow = `0 0 25px ${fixedFirstBoss.color}`;
-            }
+            updateFixedFirstBossVisual();
         }
     }
 

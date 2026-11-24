@@ -425,6 +425,7 @@ let offscreenCanvas = document.createElement('canvas');
 let offCtx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 let zanyouState = { active: false, timer: 0, duration: 1.2, angle: 0 };
 let mutouFlashState = { active: false, timer: 0, duration: 1.2, angle: 0, lines: [] };
+let ashuraDankaiState = { active: false, timer: 0, duration: 1.2, angle: 0, originX: 0, originY: 0 };
 let wildHunts = [];
 let rahatOrbitAngle = 0;
 
@@ -687,6 +688,7 @@ function selectWeapon(weaponType) {
     rahatOrbitAngle = 0;
     zanyouState.active = false;
     mutouFlashState.active = false;
+    ashuraDankaiState.active = false;
 
     gameTime = 0;
     spawnTimer = 0.5;
@@ -1332,7 +1334,7 @@ function renderPauseMenu() {
             const satsuiMult = ws.hasSatsui ? 1.7 : 1.0;
             const maxChain = ws.hasSatsui ? 3 : 4;
             addEntry('妖刀・会心連鎖 (1連鎖目)', fmt(base * 0.9 * indirectBossMult * satsuiMult, true), `会心継続で最大${maxChain}回連鎖`);
-            addEntry('スキル【居合】(納刀時会心)', fmt(base * s.critDamage * 2.2 * indirectBossMult, false), '確定会心＋連鎖誘発');
+            addEntry('スキル【居合】(納刀時会心)', fmt(base * getEffectiveCritDamage() * 2.2 * indirectBossMult, false), '確定会心＋連鎖誘発');
         } else if (player.weaponType === 'hagoromo') {
             const base = s.damage;
             addEntry('通常射撃 (1発あたり)', fmt(base * indirectBossMult, true));
@@ -1868,52 +1870,162 @@ function useSkill() {
         });
         activated = true;
     } else if (player.weaponType === 'muramasa') {
-        const iaiRadius = 230 * player.stats.areaScale;
-        const centerX = player.x;
-        const centerY = player.y;
-        player.invulnTimer = Math.max(player.invulnTimer, 0.45);
-        spawnDamageText(player.x, player.y - 32, '居合...', true, '#c084fc');
+        const iaiRadius = 240 * player.stats.areaScale;
+        const waitDuration = 0.45;
+        const slashDuration = 0.45;
+        const totalDuration = waitDuration + slashDuration;
+        player.invulnTimer = Math.max(player.invulnTimer, totalDuration + 0.15);
+        spawnDamageText(player.x, player.y - 32, '居合・構え...', true, '#c084fc');
 
         customEntities.add({
-            life: 0.38,
-            slashed: false,
+            life: totalDuration,
+            elapsed: 0,
+            unsheathed: false,
+            slashTickTimer: 0,
             hitTargets: new Set(),
             update(dt) {
+                if (isGameOver || !player) { this.life = 0; return; }
+                this.elapsed += dt;
                 this.life -= dt;
-                if (!this.slashed && this.life <= 0.18) {
-                    this.slashed = true;
-                    if (isGameOver || !player) { this.life = 0; return; }
-                    for (let k = 0; k < 14; k++) {
+
+                // 1. 待機フェーズ：紫の刀気がプレイヤーに収束
+                if (this.elapsed < waitDuration) {
+                    if (Math.random() < 0.65) {
                         const ang = Math.random() * Math.PI * 2;
-                        const off = (Math.random() - 0.5) * iaiRadius * 1.1;
-                        const mx = centerX + Math.cos(ang + Math.PI / 2) * off;
-                        const my = centerY + Math.sin(ang + Math.PI / 2) * off;
-                        slashEffects.push({
-                            isLine: true, isThinSlash: true, isCritSlash: true,
-                            x1: mx - Math.cos(ang) * iaiRadius, y1: my - Math.sin(ang) * iaiRadius,
-                            x2: mx + Math.cos(ang) * iaiRadius, y2: my + Math.sin(ang) * iaiRadius,
-                            life: 0.28, maxLife: 0.28, color: '#e879f9'
+                        const dist = iaiRadius * (0.45 + Math.random() * 0.55);
+                        particles.push({
+                            x: player.x + Math.cos(ang) * dist,
+                            y: player.y + Math.sin(ang) * dist,
+                            vx: -Math.cos(ang) * 260,
+                            vy: -Math.sin(ang) * 260,
+                            life: 0.25,
+                            color: Math.random() < 0.5 ? '#e879f9' : '#c084fc',
+                            size: 2.5
                         });
                     }
-                    enemyGrid.findNearby(centerX, centerY, iaiRadius + 40).forEach(e => {
-                        if (!e.isEnemyProj && e.hp > 0 && Math.hypot(e.x - centerX, e.y - centerY) <= iaiRadius + e.radius) {
-                            this.hitTargets.add(e);
-                        }
+                    return;
+                }
+
+                // 2. 抜刀フェーズ：範囲内に無数の斬撃を連続で放ち、的中した敵を記録
+                if (!this.unsheathed) {
+                    this.unsheathed = true;
+                    spawnDamageText(player.x, player.y - 36, '抜刀!!', true, '#e879f9');
+                    slashEffects.push({
+                        x: player.x, y: player.y, radius: iaiRadius,
+                        startAngle: 0, endAngle: Math.PI * 2, isFullCircle: true,
+                        life: 0.22, maxLife: 0.22, color: 'rgba(232, 121, 249, 0.45)'
                     });
                 }
-                if (this.life <= 0) {
-                    if (isGameOver || !player) return;
-                    spawnDamageText(player.x, player.y - 36, '納刀!!', true, '#f0abfc');
-                    const iaiDmgBase = getEffectiveBaseDamage() * getEffectiveCritDamage() * 2.2;
+
+                if (this.life > 0) {
+                    this.slashTickTimer -= dt;
+                    if (this.slashTickTimer <= 0) {
+                        this.slashTickTimer = 0.065;
+                        const cx = player.x;
+                        const cy = player.y;
+                        for (let k = 0; k < 5; k++) {
+                            const ang = Math.random() * Math.PI * 2;
+                            const off = (Math.random() - 0.5) * iaiRadius * 1.15;
+                            const mx = cx + Math.cos(ang + Math.PI / 2) * off;
+                            const my = cy + Math.sin(ang + Math.PI / 2) * off;
+                            const halfLen = Math.sqrt(Math.max(400, iaiRadius * iaiRadius - off * off));
+                            slashEffects.push({
+                                isLine: true, isThinSlash: true, isCritSlash: true,
+                                x1: mx - Math.cos(ang) * halfLen, y1: my - Math.sin(ang) * halfLen,
+                                x2: mx + Math.cos(ang) * halfLen, y2: my + Math.sin(ang) * halfLen,
+                                life: 0.22, maxLife: 0.22, color: '#e879f9'
+                            });
+                        }
+                        enemyGrid.findNearby(cx, cy, iaiRadius + 40).forEach(e => {
+                            if (!e.isEnemyProj && e.hp > 0 && Math.hypot(e.x - cx, e.y - cy) <= iaiRadius + e.radius) {
+                                if (!this.hitTargets.has(e)) {
+                                    this.hitTargets.add(e);
+                                    const hAng = Math.random() * Math.PI;
+                                    slashEffects.push({
+                                        isLine: true, isThinSlash: true,
+                                        x1: e.x - Math.cos(hAng) * 32, y1: e.y - Math.sin(hAng) * 32,
+                                        x2: e.x + Math.cos(hAng) * 32, y2: e.y + Math.sin(hAng) * 32,
+                                        life: 0.25, maxLife: 0.25, color: '#f0abfc'
+                                    });
+                                    for (let p = 0; p < 4; p++) {
+                                        particles.push(createParticle(e.x, e.y, '#e879f9', 1.1));
+                                    }
+                                }
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                // 3. 納刀フェーズ：的中した全敵へ一斉に会心ダメージを与える
+                spawnDamageText(player.x, player.y - 38, '納刀!!', true, '#f0abfc');
+                slashEffects.push({
+                    x: player.x, y: player.y, radius: iaiRadius * 1.05,
+                    startAngle: 0, endAngle: Math.PI * 2, isFullCircle: true, isEnhanced: true,
+                    life: 0.28, maxLife: 0.28, color: 'rgba(240, 171, 252, 0.5)'
+                });
+
+                const iaiDmgBase = player.stats.damage * getEffectiveCritDamage() * 2.2;
+                this.hitTargets.forEach(e => {
+                    if (e.hp <= 0) return;
+                    const finalDmg = iaiDmgBase * calculateDamageMult(e, false);
+                    e.hp -= finalDmg;
+                    checkSkadiIcicle(e);
+                    spawnDamageText(e.x, e.y - 16, Math.floor(finalDmg), true, '#e879f9');
+                    triggerMuramasaSlash(e.x, e.y, 520 * player.stats.areaScale, 0.9, 1);
+                    if (player.stats.explosionRadius > 0) {
+                        triggerExplosion(e.x, e.y, player.stats.explosionRadius, finalDmg * 0.4);
+                    }
+                    for (let p = 0; p < 6; p++) {
+                        particles.push(createParticle(e.x, e.y, '#f0abfc', 1.3));
+                    }
+                });
+            },
+            draw(ctx) {
+                if (!player || isGameOver) return;
+                ctx.save();
+                if (this.elapsed < waitDuration) {
+                    const prog = this.elapsed / waitDuration;
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, iaiRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = `rgba(168, 85, 247, ${0.08 + prog * 0.08})`;
+                    ctx.fill();
+                    ctx.setLineDash([8, 6]);
+                    ctx.lineDashOffset = -gameTime * 45;
+                    ctx.strokeStyle = `rgba(216, 180, 254, ${0.45 + prog * 0.4})`;
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, iaiRadius * (1 - prog * 0.85), 0, Math.PI * 2);
+                    ctx.strokeStyle = 'rgba(240, 171, 252, 0.75)';
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(player.x, player.y, iaiRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = 'rgba(192, 132, 252, 0.14)';
+                    ctx.fill();
+                    ctx.strokeStyle = 'rgba(240, 171, 252, 0.85)';
+                    ctx.lineWidth = 2.5;
+                    ctx.stroke();
+
                     this.hitTargets.forEach(e => {
                         if (e.hp <= 0) return;
-                        const finalDmg = iaiDmgBase * calculateDamageMult(e, false);
-                        e.hp -= finalDmg;
-                        checkSkadiIcicle(e);
-                        spawnDamageText(e.x, e.y - 16, Math.floor(finalDmg), true, '#e879f9');
-                        triggerMuramasaSlash(e.x, e.y, 520 * player.stats.areaScale, 0.9, 1);
+                        const r = e.radius + 8;
+                        ctx.save();
+                        ctx.translate(e.x, e.y);
+                        ctx.strokeStyle = '#f0abfc';
+                        ctx.lineWidth = 2.5;
+                        ctx.beginPath();
+                        ctx.moveTo(-r, -r); ctx.lineTo(r, r);
+                        ctx.moveTo(r, -r); ctx.lineTo(-r, r);
+                        ctx.stroke();
+                        ctx.restore();
                     });
                 }
+                ctx.restore();
             }
         });
         activated = true;
@@ -3259,6 +3371,12 @@ function update(dt) {
             mutouFlashState.active = false;
         }
     }
+    if (ashuraDankaiState.active) {
+        ashuraDankaiState.timer -= dt;
+        if (ashuraDankaiState.timer <= 0) {
+            ashuraDankaiState.active = false;
+        }
+    }
     if (bossRewardFlash.alpha > 0) {
         bossRewardFlash.alpha = Math.max(0, bossRewardFlash.alpha - dt * 1.3);
     }
@@ -4493,6 +4611,9 @@ function update(dt) {
                     for (let k = -2; k <= 2; k++) hazardZones.push({ type: 'line_telegraph', ownerBoss: e, followBoss: true, angle: baseAng + k * 0.35, length: 280, x1: e.x, y1: e.y, x2: e.x + Math.cos(baseAng + k * 0.35) * 280, y2: e.y + Math.sin(baseAng + k * 0.35) * 280, width: 12, color: 'rgba(192, 132, 252, 0.24)', borderColor: '#e879f9', showArrow: true, life: warnTime, maxLife: warnTime });
                 }
             } else if (e.bossId === 'kenki') {
+                e.tertiaryTimer = (e.tertiaryTimer !== undefined ? e.tertiaryTimer : 6.0) - dt;
+                e.quaternaryTimer = (e.quaternaryTimer !== undefined ? e.quaternaryTimer : 10.0) - dt;
+
                 if (e.actionState === 'telegraph_dash') {
                     skipDefaultMove = true; e.stateTimer -= dt;
                     if (e.stateTimer <= 0) { e.actionState = 'dashing'; e.stateTimer = 0.25; e.dashTrailTimer = 0; spawnDamageText(e.x, e.y - 48, '一閃!!', true, '#f472b6'); }
@@ -4505,6 +4626,79 @@ function update(dt) {
                         for (let p=0; p<2; p++) particles.push(createParticle(e.x, e.y, '#f472b6', 0.8));
                     }
                     if (e.stateTimer <= 0) { e.actionState = 'chase'; }
+                } else if (e.actionState === 'prep_hyakujin') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) {
+                        e.actionState = 'chase';
+                        e.tertiaryTimer = 7.5;
+                        const warnTime = 0.6;
+                        e.telegraphType = 'charge_nova'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#f472b6';
+                        spawnDamageText(e.x, e.y - 50, '百刃狂乱...', true, '#f472b6');
+                        
+                        const bossRef = e;
+                        const slashCount = 10;
+                        for (let k = 0; k < slashCount; k++) {
+                            const angle = Math.random() * Math.PI * 2;
+                            const dist = Math.random() * 450;
+                            const cx = player.x + Math.cos(angle) * dist;
+                            const cy = player.y + Math.sin(angle) * dist;
+                            const slashAng = Math.random() * Math.PI * 2;
+                            const halfLen = 150 + Math.random() * 100;
+                            const x1 = cx - Math.cos(slashAng) * halfLen;
+                            const y1 = cy - Math.sin(slashAng) * halfLen;
+                            const x2 = cx + Math.cos(slashAng) * halfLen;
+                            const y2 = cy + Math.sin(slashAng) * halfLen;
+                            
+                            hazardZones.push({
+                                type: 'line_telegraph', ownerBoss: e, x1: x1, y1: y1, x2: x2, y2: y2, width: 10, color: 'rgba(244, 114, 182, 0.15)', borderColor: '#f472b6', showArrow: false, life: warnTime + k*0.015, maxLife: warnTime + k*0.015,
+                                onTrigger: () => {
+                                    if (bossRef.hp <= 0) return;
+                                    slashEffects.push({ isLine: true, isThinSlash: true, x1: x1, y1: y1, x2: x2, y2: y2, life: 0.25, maxLife: 0.25, color: '#f472b6' });
+                                    if (distToSegment(player.x, player.y, x1, y1, x2, y2) <= player.radius + 8) damagePlayer(bossRef.damage * 1.5, bossRef);
+                                }
+                            });
+                        }
+                    }
+                } else if (e.actionState === 'prep_dankai') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) {
+                        e.actionState = 'chase';
+                        e.quaternaryTimer = 11.0;
+                        const warnTime = 1.9;
+                        e.telegraphType = 'charge_nova'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#be185d';
+                        spawnDamageText(e.x, e.y - 50, '修羅の断界...', true, '#be185d');
+                        
+                        const bossRef = e;
+                        const slashAng = Math.atan2(player.y - e.y, player.x - e.x) + (Math.random() - 0.5) * 0.4;
+                        const halfLen = 1200;
+                        const x1 = e.x - Math.cos(slashAng) * halfLen;
+                        const y1 = e.y - Math.sin(slashAng) * halfLen;
+                        const x2 = e.x + Math.cos(slashAng) * halfLen;
+                        const y2 = e.y + Math.sin(slashAng) * halfLen;
+                        
+                        hazardZones.push({
+                            type: 'dankai_telegraph', ownerBoss: e, 
+                            originX: e.x, originY: e.y, angle: slashAng, maxWidth: 300,
+                            life: warnTime, maxLife: warnTime,
+                            onTrigger: () => {
+                                if (bossRef.hp <= 0) return;
+                                
+                                ashuraDankaiState.active = true;
+                                ashuraDankaiState.timer = ashuraDankaiState.duration;
+                                ashuraDankaiState.angle = slashAng;
+                                ashuraDankaiState.originX = bossRef.x;
+                                ashuraDankaiState.originY = bossRef.y;
+
+                                slashEffects.push({ isLine: true, isThinSlash: true, x1: x1, y1: y1, x2: x2, y2: y2, life: 0.5, maxLife: 0.5, color: '#be185d' });
+                                slashEffects.push({ isLine: true, x1: x1, y1: y1, x2: x2, y2: y2, life: 0.3, maxLife: 0.3, color: '#f472b6' });
+                                for (let p = 0; p < 40; p++) {
+                                    const pDist = (Math.random() * 2 - 1) * 800;
+                                    particles.push(createParticle(bossRef.x + Math.cos(slashAng) * pDist, bossRef.y + Math.sin(slashAng) * pDist, '#be185d', 2.0));
+                                }
+                                if (distToSegment(player.x, player.y, x1, y1, x2, y2) <= player.radius + 45) damagePlayer(bossRef.damage * 3.5, bossRef);
+                            }
+                        });
+                    }
                 } else {
                     if (e.gimmickTimer <= 0) {
                         e.gimmickTimer = 4.8; const ang = Math.atan2(player.y - e.y, player.x - e.x), dashDist = 650, dashDur = 0.25;
@@ -4513,7 +4707,7 @@ function update(dt) {
                         e.actionState = 'telegraph_dash'; e.stateTimer = warnTime; e.telegraphType = 'charge_dash'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#f472b6'; e.telegraphAngle = ang;
                         const bossRef = e;
                         hazardZones.push({ 
-                            type: 'line_telegraph', ownerBoss: e, x1: e.x, y1: e.y, x2: e.x + Math.cos(ang) * dashDist, y2: e.y + Math.sin(ang) * dashDist, width: 40, color: 'rgba(244, 114, 182, 0.3)', borderColor: '#f472b6', showArrow: true, life: warnTime, maxLife: warnTime,
+                            type: 'line_telegraph', ownerBoss: e, x1: e.x, y1: e.y, x2: e.x + Math.cos(ang) * dashDist, y2: e.y + Math.sin(ang) * dashDist, width: 28, color: 'rgba(244, 114, 182, 0.3)', borderColor: '#f472b6', showArrow: true, life: warnTime, maxLife: warnTime,
                             onTrigger: () => {
                                 if (bossRef.hp <= 0) return;
                                 slashEffects.push({ isLine: true, isThinSlash: true, x1: bossRef.x, y1: bossRef.y, x2: bossRef.x + Math.cos(ang) * dashDist, y2: bossRef.y + Math.sin(ang) * dashDist, life: 0.3, maxLife: 0.3, color: '#f472b6' });
@@ -4525,15 +4719,27 @@ function update(dt) {
                         e.secondaryTimer = 5.5; const warnTime = 0.8, bossRef = e;
                         e.telegraphType = 'charge_nova'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#fb7185';
                         hazardZones.push({
-                            type: 'circle_telegraph', ownerBoss: e, followBoss: true, x: e.x, y: e.y, radius: 320, color: 'rgba(244, 114, 182, 0.2)', borderColor: '#fb7185', life: warnTime, maxLife: warnTime,
+                            type: 'circle_telegraph', ownerBoss: e, followBoss: true, x: e.x, y: e.y, radius: 224, color: 'rgba(244, 114, 182, 0.2)', borderColor: '#fb7185', life: warnTime, maxLife: warnTime,
                             onTrigger: () => {
                                 if (bossRef.hp <= 0) return;
                                 spawnDamageText(bossRef.x, bossRef.y - 50, '円舞斬!!', true, '#fb7185');
-                                slashEffects.push({ x: bossRef.x, y: bossRef.y, radius: 320, startAngle: 0, endAngle: Math.PI * 2, isFullCircle: true, isEnhanced: true, life: 0.3, maxLife: 0.3, color: 'rgba(244, 114, 182, 0.6)' });
+                                slashEffects.push({ x: bossRef.x, y: bossRef.y, radius: 224, startAngle: 0, endAngle: Math.PI * 2, isFullCircle: true, isEnhanced: true, life: 0.3, maxLife: 0.3, color: 'rgba(244, 114, 182, 0.6)' });
                                 for (let p = 0; p < 20; p++) particles.push(createParticle(bossRef.x, bossRef.y, '#f472b6', 1.5));
-                                if (Math.hypot(player.x - bossRef.x, player.y - bossRef.y) <= 320 + player.radius) damagePlayer(bossRef.damage * 1.6, bossRef);
+                                if (Math.hypot(player.x - bossRef.x, player.y - bossRef.y) <= 224 + player.radius) damagePlayer(bossRef.damage * 1.6, bossRef);
                             }
                         });
+                    }
+                    if (e.tertiaryTimer <= 0 && e.actionState === 'chase') {
+                        e.actionState = 'prep_hyakujin';
+                        e.stateTimer = 0.5;
+                        spawnDamageText(e.x, e.y - 50, '構え...', true, '#f472b6');
+                        e.tertiaryTimer = 999;
+                    }
+                    if (e.quaternaryTimer <= 0 && e.actionState === 'chase') {
+                        e.actionState = 'prep_dankai';
+                        e.stateTimer = 0.5;
+                        spawnDamageText(e.x, e.y - 50, '奥義の構え...', true, '#be185d');
+                        e.quaternaryTimer = 999;
                     }
                 }
             } else if (e.bossId === 'arachne') {
@@ -5019,6 +5225,31 @@ function draw() {
                 ctx.lineWidth = 1.5;
                 ctx.stroke();
             }
+            ctx.restore();
+        } else if (hz.type === 'dankai_telegraph') {
+            ctx.save();
+            const progress = Math.min(1, Math.max(0, 1 - hz.life / hz.maxLife));
+            const isImminent = progress > 0.8 && Math.floor(gameTime * 30) % 2 === 0;
+            
+            ctx.translate(hz.originX, hz.originY);
+            ctx.rotate(hz.angle);
+            
+            const currentWidth = hz.maxWidth * (1 - progress * 0.6); // 300 -> 120に収束
+            
+            ctx.fillStyle = isImminent ? 'rgba(255, 255, 255, 0.4)' : 'rgba(190, 24, 93, 0.35)';
+            ctx.fillRect(-2000, -currentWidth / 2, 4000, currentWidth);
+            
+            ctx.strokeStyle = isImminent ? '#ffffff' : '#be185d';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(-2000, -currentWidth / 2, 4000, currentWidth);
+            
+            ctx.beginPath();
+            ctx.moveTo(-2000, 0);
+            ctx.lineTo(2000, 0);
+            ctx.strokeStyle = isImminent ? '#ffffff' : 'rgba(244, 114, 182, 0.8)';
+            ctx.lineWidth = 2 + progress * 6;
+            ctx.stroke();
+            
             ctx.restore();
         }
     });
@@ -5869,6 +6100,65 @@ function draw() {
             ctx.stroke();
             ctx.restore();
         });
+    }
+
+    // アシュラ「修羅の断界」の画面断層ズレ演出
+    if (ashuraDankaiState.active) {
+        offCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+        offCtx.drawImage(canvas, 0, 0);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        const prog = 1 - ashuraDankaiState.timer / ashuraDankaiState.duration;
+        const offset = Math.sin(prog * Math.PI) * 90;
+        const camX = player ? player.x - canvas.width / 2 : 0;
+        const camY = player ? player.y - canvas.height / 2 : 0;
+        const cx = ashuraDankaiState.originX - camX;
+        const cy = ashuraDankaiState.originY - camY;
+        const ang = ashuraDankaiState.angle;
+        
+        // 切断面に対して垂直（左右に開くような）方向にズレる
+        const dx = Math.cos(ang + Math.PI / 2) * offset;
+        const dy = Math.sin(ang + Math.PI / 2) * offset;
+        const largeSize = Math.max(canvas.width, canvas.height) * 2;
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.translate(cx, cy);
+        ctx.rotate(ang);
+        ctx.rect(-largeSize, 0, largeSize*2, largeSize*2); // 下半分 (+y側)
+        ctx.clip();
+        ctx.rotate(-ang);
+        ctx.translate(-cx, -cy);
+        ctx.drawImage(offscreenCanvas, dx, dy);
+        ctx.restore();
+
+        ctx.save();
+        ctx.beginPath();
+        ctx.translate(cx, cy);
+        ctx.rotate(ang);
+        ctx.rect(-largeSize, -largeSize, largeSize*2, largeSize); // 上半分 (-y側)
+        ctx.clip();
+        ctx.rotate(-ang);
+        ctx.translate(-cx, -cy);
+        ctx.drawImage(offscreenCanvas, -dx, -dy);
+        ctx.restore();
+        
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(ang);
+        ctx.strokeStyle = `rgba(255, 255, 255, ${Math.sin(prog * Math.PI)})`;
+        ctx.lineWidth = 30 * Math.sin(prog * Math.PI);
+        ctx.beginPath();
+        ctx.moveTo(-largeSize, 0);
+        ctx.lineTo(largeSize, 0);
+        ctx.stroke();
+        
+        ctx.strokeStyle = `rgba(190, 24, 93, ${Math.sin(prog * Math.PI)})`;
+        ctx.lineWidth = 12 * Math.sin(prog * Math.PI);
+        ctx.stroke();
+        ctx.restore();
     }
 
     // ボス討伐報酬獲得時の画面フラッシュ演出

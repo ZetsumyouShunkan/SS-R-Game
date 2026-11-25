@@ -3070,6 +3070,9 @@ function calculateDamageMult(target, isMelee) {
         } else if (target.threadMark > 0) {
             mult += target.threadMark * 0.20;
         }
+        if (target.ittoDamageTaken > 0) {
+            mult += target.ittoDamageTaken;
+        }
     }
     return Math.max(0.1, mult);
 }
@@ -3127,11 +3130,12 @@ function spawnBoss() {
     
     const newBoss = {
         x: player.x + Math.cos(angle) * dist, y: player.y + Math.sin(angle) * dist, radius: tpl.radius, hp: baseHp, maxHp: baseHp,
-        speed: tpl.speed, damage: baseDamage, isBoss: true, isEnemyProj: false,
+        speed: tpl.speed, damage: baseDamage, bossBaseDamage: baseDamage, isBoss: true, isEnemyProj: false,
         bossId: tpl.id, bossName: fullName, bossColor: tpl.color, bossStroke: tpl.strokeColor, barGradient: tpl.barGradient,
         gimmickTimer: 2.2, secondaryTimer: 3.2, tertiaryTimer: 4.8, actionState: 'chase', stateTimer: 0,
         telegraphType: 'none', telegraphTimer: 0, telegraphMax: 0, telegraphColor: tpl.strokeColor, telegraphAngle: 0, telegraphOffsetX: 0,
-        telegraphOffsetY: 0, dashVx: 0, dashVy: 0, dashTrailTimer: 0, isEnhancedDash: false, spinAngle: 0, gravityActive: false, dustDebuffTimer: 0, burnTimer: 0, burnTickTimer: 0
+        telegraphOffsetY: 0, dashVx: 0, dashVy: 0, dashTrailTimer: 0, isEnhancedDash: false, spinAngle: 0, gravityActive: false, dustDebuffTimer: 0, burnTimer: 0, burnTickTimer: 0,
+        ittoDamageTaken: tpl.id === 'kenki' ? 0.20 : 0, ittoDamageDealt: 0
     };
     enemies.push(newBoss);
 
@@ -3973,6 +3977,39 @@ function update(dt) {
                 e.vx = Math.cos(nextAng) * spd; e.vy = Math.sin(nextAng) * spd;
             }
             e.x += e.vx * dt; e.y += e.vy * dt;
+
+            if (e.isIgnisFireball) {
+                e.fireZoneTimer = (e.fireZoneTimer || 0) - dt;
+                if (e.fireZoneTimer <= 0) {
+                    e.fireZoneTimer = 0.12; // 0.12秒ごとに小さな火炎地帯を生成
+                    hazardZones.push({
+                        type: 'flame_patch', ownerBoss: e.owner, x: e.x, y: e.y,
+                        radius: 18, // 小さな火炎地帯
+                        life: 2.0, maxLife: 2.0,
+                        tickTimer: 0.2,
+                        damage: e.damage * 0.4
+                    });
+                }
+            }
+
+            if (e.isGrudgeProj) {
+                let hitEnemy = false;
+                enemyGrid.findNearby(e.x, e.y, e.radius + 40).forEach(other => {
+                    if (hitEnemy) return;
+                    if (other !== e && !other.isEnemyProj && other.hp > 0 && Math.hypot(other.x - e.x, other.y - e.y) <= other.radius + e.radius) {
+                        other.hp -= e.damage;
+                        checkSkadiIcicle(other);
+                        spawnDamageText(other.x, other.y - 10, Math.floor(e.damage), false, '#c084fc');
+                        for(let p=0; p<4; p++) particles.push(createParticle(e.x, e.y, '#c084fc', 0.8));
+                        hitEnemy = true;
+                    }
+                });
+                if (hitEnemy) {
+                    enemies.splice(i, 1);
+                    continue;
+                }
+            }
+
             if (Math.hypot(e.x - player.x, e.y - player.y) <= e.radius + player.radius) {
                 damagePlayer(e.damage, e.owner || null); if (e.chillDuration) player.chillTimer = Math.max(player.chillTimer, e.chillDuration);
                 enemies.splice(i, 1); continue;
@@ -4186,8 +4223,8 @@ function update(dt) {
                         for (let k = -4; k <= 4; k++) {
                             const ang = baseAng + k * 0.18;
                             hazardZones.push({
-                                type: 'line_telegraph', ownerBoss: e, followBoss: true, angle: ang, length: 480, x1: e.x, y1: e.y, x2: e.x + Math.cos(ang) * 480, y2: e.y + Math.sin(ang) * 480, width: 16, color: 'rgba(249, 115, 22, 0.25)', borderColor: '#fdba74', showArrow: true, life: warnTime, maxLife: warnTime,
-                                onTrigger: k === 0 ? () => { if (bossRef.hp <= 0) return; for (let j = -4; j <= 4; j++) { const fAng = baseAng + j * 0.18; enemies.push({ x: bossRef.x, y: bossRef.y, vx: Math.cos(fAng) * 280, vy: Math.sin(fAng) * 280, radius: 10, damage: bossRef.damage * 1.2, life: 3.6, projColor: '#f97316', isEnemyProj: true, owner: bossRef }); } } : null
+                                type: 'line_telegraph', ownerBoss: e, followBoss: true, angle: ang, length: 240, x1: e.x, y1: e.y, x2: e.x + Math.cos(ang) * 240, y2: e.y + Math.sin(ang) * 240, width: 16, color: 'rgba(249, 115, 22, 0.25)', borderColor: '#fdba74', showArrow: true, life: warnTime, maxLife: warnTime,
+                                onTrigger: k === 0 ? () => { if (bossRef.hp <= 0) return; for (let j = -4; j <= 4; j++) { const fAng = baseAng + j * 0.18; enemies.push({ x: bossRef.x, y: bossRef.y, vx: Math.cos(fAng) * 280, vy: Math.sin(fAng) * 280, radius: 10, damage: bossRef.damage * 1.2, life: 1.8, projColor: '#f97316', isEnemyProj: true, owner: bossRef, isIgnisFireball: true }); } } : null
                             });
                         }
                     }
@@ -4544,7 +4581,92 @@ function update(dt) {
                     }
                 }
             } else if (e.bossId === 'necrolord') {
-                if (e.gravityActive) {
+                e.tertiaryTimer = (e.tertiaryTimer !== undefined ? e.tertiaryTimer : 8.0) - dt;
+                e.quaternaryTimer = (e.quaternaryTimer !== undefined ? e.quaternaryTimer : 11.0) - dt;
+                e.quinaryTimer = (e.quinaryTimer !== undefined ? e.quinaryTimer : 14.0) - dt;
+
+                if (e.actionState === 'necro_grudge_prep') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) {
+                        e.actionState = 'chase';
+                        for(let k=0; k<3; k++) {
+                            const ang = (Math.PI*2/3) * k + Math.random()*0.5;
+                            const sx = e.x + Math.cos(ang)*80;
+                            const sy = e.y + Math.sin(ang)*80;
+                            enemies.push({
+                                x: sx, y: sy, radius: 12, hp: 45 + player.level * 10, maxHp: 45 + player.level * 10,
+                                speed: 100, damage: e.damage * 0.8, isBoss: false, isMinion: true, isEnemyProj: false,
+                                enemyType: 'caster', enemyColor: '#06b6d4', enemyStroke: '#67e8f9',
+                                actionTimer: 1.0, state: 'chase', dustDebuffTimer: 0, burnTimer: 0, burnTickTimer: 0
+                            });
+                            for(let p=0; p<6; p++) particles.push(createParticle(sx, sy, '#c084fc', 1.0));
+                        }
+                    }
+                } else if (e.actionState === 'necro_darkhole_prep') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0.7 && !e.darkholeWarned) {
+                        e.darkholeWarned = true;
+                        e.darkholeTarget = {x: player.x, y: player.y};
+                        const bossRef = e;
+                        hazardZones.push({
+                            type: 'circle_telegraph', ownerBoss: e,
+                            x: e.darkholeTarget.x, y: e.darkholeTarget.y, radius: 110,
+                            color: 'rgba(168, 85, 247, 0.3)', borderColor: '#c084fc',
+                            life: 0.7, maxLife: 0.7,
+                            onTrigger: () => {
+                                if (bossRef.hp <= 0) return;
+                                hazardZones.push({
+                                    type: 'darkhole_area', ownerBoss: bossRef,
+                                    x: bossRef.darkholeTarget.x, y: bossRef.darkholeTarget.y, radius: 110,
+                                    life: 1.4, maxLife: 1.4, tickTimer: 0.2, damage: bossRef.damage * 0.5
+                                });
+                            }
+                        });
+                    }
+                    if (e.stateTimer <= 0) e.actionState = 'chase';
+                } else if (e.actionState === 'necro_gate_motion') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) {
+                        e.actionState = 'necro_gate_aim'; e.stateTimer = 1.8;
+                        e.gateAngle = Math.atan2(player.y - e.y, player.x - e.x);
+                        const hz = {
+                            type: 'line_telegraph', ownerBoss: e, followBoss: true,
+                            angle: e.gateAngle, length: 1200, width: 90,
+                            x1: e.x, y1: e.y, x2: e.x + Math.cos(e.gateAngle)*1200, y2: e.y + Math.sin(e.gateAngle)*1200,
+                            color: 'rgba(126, 34, 206, 0.25)', borderColor: '#a855f7', showArrow: false,
+                            life: 1.8 + 0.7 + 1.6, maxLife: 1.8 + 0.7 + 1.6
+                        };
+                        hazardZones.push(hz); e.gateHazard = hz;
+                    }
+                } else if (e.actionState === 'necro_gate_aim') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    e.gateAngle = Math.atan2(player.y - e.y, player.x - e.x);
+                    if (e.gateHazard) {
+                        e.gateHazard.angle = e.gateAngle; e.gateHazard.x1 = e.x; e.gateHazard.y1 = e.y;
+                        e.gateHazard.x2 = e.x + Math.cos(e.gateAngle)*1200; e.gateHazard.y2 = e.y + Math.sin(e.gateAngle)*1200;
+                    }
+                    if (e.stateTimer <= 0) { e.actionState = 'necro_gate_wait'; e.stateTimer = 0.7; }
+                } else if (e.actionState === 'necro_gate_wait') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.gateHazard) {
+                        e.gateHazard.x1 = e.x; e.gateHazard.y1 = e.y;
+                        e.gateHazard.x2 = e.x + Math.cos(e.gateAngle)*1200; e.gateHazard.y2 = e.y + Math.sin(e.gateAngle)*1200;
+                    }
+                    if (e.stateTimer <= 0) { e.actionState = 'necro_gate_fire'; e.stateTimer = 1.6; spawnDamageText(e.x, e.y - 50, '開門!!', true, '#c084fc'); e.gateFireTimer = 0; }
+                } else if (e.actionState === 'necro_gate_fire') {
+                    skipDefaultMove = true; e.stateTimer -= dt; e.gateFireTimer -= dt;
+                    const gateX = e.x + Math.cos(e.gateAngle)*45, gateY = e.y + Math.sin(e.gateAngle)*45;
+                    slashEffects.push({ x: gateX, y: gateY, radius: 45 + Math.random()*10, startAngle: 0, endAngle: Math.PI*2, isFullCircle: true, life: 0.1, maxLife: 0.1, color: 'rgba(59, 7, 100, 0.8)' });
+                    if (e.gateFireTimer <= 0) {
+                        e.gateFireTimer = 0.08; const spread = (Math.random() - 0.5) * 0.4; const fireAng = e.gateAngle + spread;
+                        enemies.push({ x: gateX, y: gateY, vx: Math.cos(fireAng)*450, vy: Math.sin(fireAng)*450, radius: 14 + Math.random()*6, damage: e.damage * 0.8, life: 2.5, projColor: '#a855f7', isEnemyProj: true, owner: e, isGrudgeProj: true });
+                    }
+                    if (e.gateHazard) {
+                        e.gateHazard.x1 = e.x; e.gateHazard.y1 = e.y;
+                        e.gateHazard.x2 = e.x + Math.cos(e.gateAngle)*1200; e.gateHazard.y2 = e.y + Math.sin(e.gateAngle)*1200;
+                    }
+                    if (e.stateTimer <= 0) { e.actionState = 'chase'; if (e.gateHazard) { e.gateHazard.life = 0; e.gateHazard = null; } }
+                } else if (e.gravityActive) {
                     e.stateTimer -= dt; const distToP = Math.hypot(e.x - player.x, e.y - player.y);
                     if (distToP > e.radius + player.radius && distToP < 520) {
                         const pullAng = Math.atan2(e.y - player.y, e.x - player.x);
@@ -4562,33 +4684,111 @@ function update(dt) {
                         e.gravityActive = false; e.novaWarned = false;
                         for (let k = 0; k < 12; k++) enemies.push({ x: e.x, y: e.y, vx: Math.cos((Math.PI * 2 / 12) * k) * 220, vy: Math.sin((Math.PI * 2 / 12) * k) * 220, radius: 9, damage: e.damage * 1.1, life: 3.4, projColor: '#4ade80', isEnemyProj: true, owner: e });
                     }
-                } else if (e.gimmickTimer <= 0) {
-                    e.gimmickTimer = 7.2; const warnTime = 0.85, bossRef = e;
-                    e.telegraphType = 'charge_gravity'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#c084fc';
-                    hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, followBoss: true, x: e.x, y: e.y, radius: 280, color: 'rgba(168, 85, 247, 0.2)', borderColor: '#c084fc', life: warnTime, maxLife: warnTime, onTrigger: () => { if (bossRef.hp <= 0) return; bossRef.gravityActive = true; bossRef.novaWarned = false; bossRef.stateTimer = 2.6; spawnDamageText(bossRef.x, bossRef.y - 50, 'アビス重力吸引!!', true, '#c084fc'); } });
-                }
-                if (e.secondaryTimer <= 0) {
-                    e.secondaryTimer = 6.5; const warnTime = 0.85, bossRef = e;
-                    e.telegraphType = 'charge_summon'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#4ade80'; spawnDamageText(e.x, e.y - 45, '死霊詠唱...', false, '#86efac');
-                    for (let s = 0; s < 6; s++) {
-                        const sAng = (Math.PI * 2 / 6) * s + Math.random() * 0.35, sx = e.x + Math.cos(sAng) * 95, sy = e.y + Math.sin(sAng) * 95;
-                        hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, x: sx, y: sy, radius: 26, color: 'rgba(74, 222, 128, 0.35)', borderColor: '#4ade80', life: warnTime, maxLife: warnTime, onTrigger: () => { if (bossRef.hp <= 0) return; enemies.push({ x: sx, y: sy, radius: 11, hp: 55 + player.level * 12, maxHp: 55 + player.level * 12, speed: 135, damage: bossRef.damage * 1.0, isBoss: false, isMinion: true, isEnemyProj: false, dustDebuffTimer: 0 }); for (let p = 0; p < 6; p++) particles.push(createParticle(sx, sy, '#4ade80', 1.1)); } });
+                } else {
+                    if (e.gimmickTimer <= 0) {
+                        e.gimmickTimer = 7.2; const warnTime = 0.85, bossRef = e;
+                        e.telegraphType = 'charge_gravity'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#c084fc';
+                        hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, followBoss: true, x: e.x, y: e.y, radius: 280, color: 'rgba(168, 85, 247, 0.2)', borderColor: '#c084fc', life: warnTime, maxLife: warnTime, onTrigger: () => { if (bossRef.hp <= 0) return; bossRef.gravityActive = true; bossRef.novaWarned = false; bossRef.stateTimer = 2.6; spawnDamageText(bossRef.x, bossRef.y - 50, 'アビス重力吸引!!', true, '#c084fc'); } });
+                    }
+                    if (e.secondaryTimer <= 0) {
+                        e.secondaryTimer = 6.5; const warnTime = 0.85, bossRef = e;
+                        e.telegraphType = 'charge_summon'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#4ade80'; spawnDamageText(e.x, e.y - 45, '死霊詠唱...', false, '#86efac');
+                        for (let s = 0; s < 6; s++) {
+                            const sAng = (Math.PI * 2 / 6) * s + Math.random() * 0.35, sx = e.x + Math.cos(sAng) * 95, sy = e.y + Math.sin(sAng) * 95;
+                            hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, x: sx, y: sy, radius: 26, color: 'rgba(74, 222, 128, 0.35)', borderColor: '#4ade80', life: warnTime, maxLife: warnTime, onTrigger: () => { if (bossRef.hp <= 0) return; enemies.push({ x: sx, y: sy, radius: 11, hp: 55 + player.level * 12, maxHp: 55 + player.level * 12, speed: 135, damage: bossRef.damage * 1.0, isBoss: false, isMinion: true, isEnemyProj: false, dustDebuffTimer: 0 }); for (let p = 0; p < 6; p++) particles.push(createParticle(sx, sy, '#4ade80', 1.1)); } });
+                        }
+                    }
+                    if (e.tertiaryTimer <= 0 && e.actionState === 'chase') {
+                        e.tertiaryTimer = 8.0; e.actionState = 'necro_grudge_prep'; e.stateTimer = 0.5;
+                        spawnDamageText(e.x, e.y - 50, '怨念召喚...', true, '#c084fc'); skipDefaultMove = true;
+                    }
+                    if (e.quaternaryTimer <= 0 && e.actionState === 'chase') {
+                        e.quaternaryTimer = 13.0; e.actionState = 'necro_darkhole_prep'; e.stateTimer = 1.8; e.darkholeWarned = false;
+                        spawnDamageText(e.x, e.y - 50, '闇への穴...', true, '#a855f7'); skipDefaultMove = true;
+                    }
+                    if (e.quinaryTimer <= 0 && e.actionState === 'chase') {
+                        e.quinaryTimer = 16.0; e.actionState = 'necro_gate_motion'; e.stateTimer = 0.7;
+                        spawnDamageText(e.x, e.y - 50, '門の詠唱...', true, '#7e22ce'); skipDefaultMove = true;
                     }
                 }
             } else if (e.bossId === 'valkyrie') {
-                if (e.gimmickTimer <= 0) {
-                    e.gimmickTimer = 5.2; const warpAng = Math.atan2(player.vy, player.vx) + (Math.random() - 0.5) * 1.2, wx = player.x + Math.cos(warpAng) * 175, wy = player.y + Math.sin(warpAng) * 175, bossRef = e, warnTime = 0.8;
-                    e.telegraphType = 'charge_warp'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#fef08a'; e.telegraphAngle = Math.atan2(wy - e.y, wx - e.x);
-                    hazardZones.push({ type: 'line_telegraph', ownerBoss: e, x1: e.x, y1: e.y, x2: wx, y2: wy, width: 18, color: 'rgba(250, 204, 21, 0.25)', borderColor: '#fef08a', showArrow: true, life: warnTime, maxLife: warnTime });
-                    for (let k = 0; k < 12; k++) hazardZones.push({ type: 'line_telegraph', ownerBoss: e, x1: wx, y1: wy, x2: wx + Math.cos((Math.PI * 2 / 12) * k) * 340, y2: wy + Math.sin((Math.PI * 2 / 12) * k) * 340, width: 10, color: 'rgba(254, 240, 138, 0.18)', borderColor: '#fde047', showArrow: true, life: warnTime, maxLife: warnTime });
-                    hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, x: wx, y: wy, radius: 75, color: 'rgba(250, 204, 21, 0.35)', borderColor: '#fef08a', life: warnTime, maxLife: warnTime, onTrigger: () => { if (bossRef.hp <= 0) return; for (let p = 0; p < 16; p++) particles.push(createParticle(bossRef.x, bossRef.y, '#fef08a', 1.5)); bossRef.x = wx; bossRef.y = wy; spawnDamageText(wx, wy - 48, '瞬雷転移!!', true, '#fef08a'); if (Math.hypot(player.x - wx, player.y - wy) <= 75 + player.radius) damagePlayer(bossRef.damage * 1.2, bossRef); for (let k = 0; k < 12; k++) enemies.push({ x: wx, y: wy, vx: Math.cos((Math.PI * 2 / 12) * k) * 320, vy: Math.sin((Math.PI * 2 / 12) * k) * 320, radius: 8, damage: bossRef.damage * 1.0, life: 3.0, projColor: '#fef08a', isEnemyProj: true, owner: bossRef }); } });
-                }
-                if (e.secondaryTimer <= 0) {
-                    e.secondaryTimer = 4.4; e.telegraphType = 'charge_nova'; e.telegraphTimer = 0.75; e.telegraphMax = 0.75; e.telegraphColor = '#38bdf8';
-                    for (let l = 0; l < 8; l++) {
-                        const offsetAng = Math.random() * Math.PI * 2, offsetDist = l === 0 ? 0 : (55 + Math.random() * 180), lx = player.x + Math.cos(offsetAng) * offsetDist, ly = player.y + Math.sin(offsetAng) * offsetDist;
-                        const warnD = 0.85 + l * 0.1;
-                        hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, x: lx, y: ly, radius: 72, color: 'rgba(56, 189, 248, 0.32)', borderColor: '#fde047', life: warnD, maxLife: warnD, onTrigger: () => { slashEffects.push({ x: lx, y: ly, radius: 72, startAngle: 0, endAngle: Math.PI * 2, isFullCircle: true, life: 0.22, maxLife: 0.22, color: 'rgba(254, 240, 138, 0.8)' }); for (let p = 0; p < 12; p++) particles.push(createParticle(lx, ly, '#fde047', 1.4)); if (Math.hypot(player.x - lx, player.y - ly) <= 72 + player.radius) damagePlayer(e.damage * 1.3, e); } });
+                e.tertiaryTimer = (e.tertiaryTimer !== undefined ? e.tertiaryTimer : 6.8) - dt;
+                e.quaternaryTimer = (e.quaternaryTimer !== undefined ? e.quaternaryTimer : 9.0) - dt;
+
+                if (e.actionState === 'valkyrie_lightband_prep') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) {
+                        e.actionState = 'chase';
+                        for (let k = 0; k < 3; k++) {
+                            const ang1 = Math.random() * Math.PI * 2; const dist1 = Math.random() * 300;
+                            const px1 = player.x + Math.cos(ang1) * dist1; const py1 = player.y + Math.sin(ang1) * dist1;
+                            const ang2 = Math.random() * Math.PI * 2;
+                            const px2 = px1 + Math.cos(ang2) * 800; const py2 = py1 + Math.sin(ang2) * 800;
+                            const warnTime = 1.4; const bossRef = e;
+                            hazardZones.push({
+                                type: 'line_telegraph', ownerBoss: e,
+                                x1: px1 - Math.cos(ang2)*800, y1: py1 - Math.sin(ang2)*800, x2: px2, y2: py2,
+                                width: 32, color: 'rgba(254, 240, 138, 0.25)', borderColor: '#fef08a', showArrow: false,
+                                life: warnTime, maxLife: warnTime,
+                                onTrigger: () => {
+                                    if (bossRef.hp <= 0) return;
+                                    slashEffects.push({ isLine: true, isBeam: true, x1: px1 - Math.cos(ang2)*800, y1: py1 - Math.sin(ang2)*800, x2: px2, y2: py2, life: 0.35, maxLife: 0.35, color: '#fef08a' });
+                                    if (distToSegment(player.x, player.y, px1 - Math.cos(ang2)*800, py1 - Math.sin(ang2)*800, px2, py2) <= player.radius + 16) damagePlayer(bossRef.damage * 1.5, bossRef);
+                                }
+                            });
+                        }
+                    }
+                } else if (e.actionState === 'valkyrie_star_prep') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) { e.actionState = 'valkyrie_star_attack'; e.stateTimer = 0.3; e.starStep = 0; spawnDamageText(e.x, e.y - 50, '星芒展開!!', true, '#fef08a'); }
+                } else if (e.actionState === 'valkyrie_star_attack') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (e.stateTimer <= 0) {
+                        if (e.starStep < 5) {
+                            const targetP = e.starPath[e.starStep];
+                            slashEffects.push({ isLine: true, isThinSlash: true, x1: e.x, y1: e.y, x2: targetP.x, y2: targetP.y, life: 0.25, maxLife: 0.25, color: '#fef08a' });
+                            e.x = targetP.x; e.y = targetP.y;
+                            slashEffects.push({ x: e.x, y: e.y, radius: 130, startAngle: 0, endAngle: Math.PI*2, isFullCircle: true, life: 0.25, maxLife: 0.25, color: 'rgba(254, 240, 138, 0.6)' });
+                            for(let p=0; p<10; p++) particles.push(createParticle(e.x, e.y, '#fef08a', 1.5));
+                            if (Math.hypot(player.x - e.x, player.y - e.y) <= 130 + player.radius) damagePlayer(e.damage * 1.2, e);
+                            e.starStep++; e.stateTimer = 0.3;
+                        } else {
+                            e.actionState = 'valkyrie_star_stun'; e.stateTimer = 2.7; spawnDamageText(e.x, e.y - 50, 'オーバーヒート', false, '#9ca3af');
+                        }
+                    }
+                } else if (e.actionState === 'valkyrie_star_stun') {
+                    skipDefaultMove = true; e.stateTimer -= dt;
+                    if (Math.random() < 0.2) particles.push(createParticle(e.x, e.y, '#9ca3af', 0.5));
+                    if (e.stateTimer <= 0) e.actionState = 'chase';
+                } else {
+                    if (e.gimmickTimer <= 0) {
+                        e.gimmickTimer = 5.2; const warpAng = Math.atan2(player.vy, player.vx) + (Math.random() - 0.5) * 1.2, wx = player.x + Math.cos(warpAng) * 175, wy = player.y + Math.sin(warpAng) * 175, bossRef = e, warnTime = 0.8;
+                        e.telegraphType = 'charge_warp'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#fef08a'; e.telegraphAngle = Math.atan2(wy - e.y, wx - e.x);
+                        hazardZones.push({ type: 'line_telegraph', ownerBoss: e, x1: e.x, y1: e.y, x2: wx, y2: wy, width: 18, color: 'rgba(250, 204, 21, 0.25)', borderColor: '#fef08a', showArrow: true, life: warnTime, maxLife: warnTime });
+                        for (let k = 0; k < 12; k++) hazardZones.push({ type: 'line_telegraph', ownerBoss: e, x1: wx, y1: wy, x2: wx + Math.cos((Math.PI * 2 / 12) * k) * 340, y2: wy + Math.sin((Math.PI * 2 / 12) * k) * 340, width: 10, color: 'rgba(254, 240, 138, 0.18)', borderColor: '#fde047', showArrow: true, life: warnTime, maxLife: warnTime });
+                        hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, x: wx, y: wy, radius: 75, color: 'rgba(250, 204, 21, 0.35)', borderColor: '#fef08a', life: warnTime, maxLife: warnTime, onTrigger: () => { if (bossRef.hp <= 0) return; for (let p = 0; p < 16; p++) particles.push(createParticle(bossRef.x, bossRef.y, '#fef08a', 1.5)); bossRef.x = wx; bossRef.y = wy; spawnDamageText(wx, wy - 48, '瞬雷転移!!', true, '#fef08a'); if (Math.hypot(player.x - wx, player.y - wy) <= 75 + player.radius) damagePlayer(bossRef.damage * 1.2, bossRef); for (let k = 0; k < 12; k++) enemies.push({ x: wx, y: wy, vx: Math.cos((Math.PI * 2 / 12) * k) * 320, vy: Math.sin((Math.PI * 2 / 12) * k) * 320, radius: 8, damage: bossRef.damage * 1.0, life: 3.0, projColor: '#fef08a', isEnemyProj: true, owner: bossRef }); } });
+                    }
+                    if (e.secondaryTimer <= 0) {
+                        e.secondaryTimer = 4.4; e.telegraphType = 'charge_nova'; e.telegraphTimer = 0.75; e.telegraphMax = 0.75; e.telegraphColor = '#38bdf8';
+                        for (let l = 0; l < 8; l++) {
+                            const offsetAng = Math.random() * Math.PI * 2, offsetDist = l === 0 ? 0 : (55 + Math.random() * 180), lx = player.x + Math.cos(offsetAng) * offsetDist, ly = player.y + Math.sin(offsetAng) * offsetDist;
+                            const warnD = 0.85 + l * 0.1;
+                            hazardZones.push({ type: 'circle_telegraph', ownerBoss: e, x: lx, y: ly, radius: 72, color: 'rgba(56, 189, 248, 0.32)', borderColor: '#fde047', life: warnD, maxLife: warnD, onTrigger: () => { slashEffects.push({ x: lx, y: ly, radius: 72, startAngle: 0, endAngle: Math.PI * 2, isFullCircle: true, life: 0.22, maxLife: 0.22, color: 'rgba(254, 240, 138, 0.8)' }); for (let p = 0; p < 12; p++) particles.push(createParticle(lx, ly, '#fde047', 1.4)); if (Math.hypot(player.x - lx, player.y - ly) <= 72 + player.radius) damagePlayer(e.damage * 1.3, e); } });
+                        }
+                    }
+                    if (e.tertiaryTimer <= 0 && e.actionState === 'chase') {
+                        e.tertiaryTimer = 6.8; e.actionState = 'valkyrie_lightband_prep'; e.stateTimer = 0.8;
+                        spawnDamageText(e.x, e.y - 50, '光帯...', true, '#fef08a'); skipDefaultMove = true;
+                    }
+                    if (e.quaternaryTimer <= 0 && e.actionState === 'chase') {
+                        e.quaternaryTimer = 9.0; e.actionState = 'valkyrie_star_prep'; e.stateTimer = 2.2;
+                        spawnDamageText(e.x, e.y - 50, '星芒...', true, '#fef08a'); skipDefaultMove = true;
+                        e.starPath = []; let curX = e.x, curY = e.y;
+                        for(let k=0; k<5; k++) { const ang = Math.random() * Math.PI * 2; curX += Math.cos(ang) * 280; curY += Math.sin(ang) * 280; e.starPath.push({x: curX, y: curY}); }
+                        for(let k=0; k<5; k++) {
+                            const startP = k === 0 ? {x: e.x, y: e.y} : e.starPath[k-1], endP = e.starPath[k];
+                            hazardZones.push({ type: 'line_telegraph', ownerBoss: e, x1: startP.x, y1: startP.y, x2: endP.x, y2: endP.y, width: 12, color: 'rgba(250, 204, 21, 0.3)', borderColor: '#fde047', showArrow: true, life: 2.2, maxLife: 2.2 });
+                        }
                     }
                 }
             } else if (e.bossId === 'ouroboros') {
@@ -4614,9 +4814,33 @@ function update(dt) {
                 e.tertiaryTimer = (e.tertiaryTimer !== undefined ? e.tertiaryTimer : 6.0) - dt;
                 e.quaternaryTimer = (e.quaternaryTimer !== undefined ? e.quaternaryTimer : 10.0) - dt;
 
+                const applyItto = (boss) => {
+                    boss.ittoDamageTaken = Math.min(2.0, boss.ittoDamageTaken + 0.10);
+                    boss.ittoDamageDealt = Math.min(0.20, boss.ittoDamageDealt + 0.01);
+                    boss.damage = boss.bossBaseDamage * (1 + boss.ittoDamageDealt);
+                };
+
                 if (e.actionState === 'telegraph_dash') {
                     skipDefaultMove = true; e.stateTimer -= dt;
-                    if (e.stateTimer <= 0) { e.actionState = 'dashing'; e.stateTimer = 0.25; e.dashTrailTimer = 0; spawnDamageText(e.x, e.y - 48, '一閃!!', true, '#f472b6'); }
+                    // 予兆モーション: 突進の逆に少し下がりつつ気を纏う
+                    const maxTelegraph = 1.0;
+                    const pullProgress = 1 - Math.max(0, e.stateTimer / maxTelegraph);
+                    const pullDist = 20;
+                    e.telegraphOffsetX = -Math.cos(e.telegraphAngle) * pullDist * Math.sin(pullProgress * Math.PI * 0.5);
+                    e.telegraphOffsetY = -Math.sin(e.telegraphAngle) * pullDist * Math.sin(pullProgress * Math.PI * 0.5);
+
+                    if (Math.random() < 0.6) {
+                        const rAng = Math.random() * Math.PI * 2;
+                        const rDist = e.radius + 15 + Math.random() * 25;
+                        particles.push({
+                            x: e.x + Math.cos(rAng) * rDist,
+                            y: e.y + Math.sin(rAng) * rDist,
+                            vx: -Math.cos(rAng) * 80,
+                            vy: -Math.sin(rAng) * 80,
+                            life: 0.3, color: '#f472b6', size: 2.5
+                        });
+                    }
+                    if (e.stateTimer <= 0) { e.actionState = 'dashing'; e.stateTimer = 0.25; e.dashTrailTimer = 0; e.telegraphOffsetX = 0; e.telegraphOffsetY = 0; spawnDamageText(e.x, e.y - 48, '一閃!!', true, '#f472b6'); }
                 } else if (e.actionState === 'dashing') {
                     skipDefaultMove = true; e.stateTimer -= dt; e.dashTrailTimer -= dt;
                     e.x += e.dashVx * dt; e.y += e.dashVy * dt;
@@ -4628,8 +4852,24 @@ function update(dt) {
                     if (e.stateTimer <= 0) { e.actionState = 'chase'; }
                 } else if (e.actionState === 'prep_hyakujin') {
                     skipDefaultMove = true; e.stateTimer -= dt;
+                    // 予兆モーション: 激しく振動しながら周囲の気を吸い込む
+                    e.telegraphOffsetX = (Math.random() - 0.5) * 8;
+                    e.telegraphOffsetY = (Math.random() - 0.5) * 8;
+
+                    if (Math.random() < 0.7) {
+                        const rAng = Math.random() * Math.PI * 2;
+                        const rDist = 45 + Math.random() * 55;
+                        particles.push({
+                            x: e.x + Math.cos(rAng) * rDist,
+                            y: e.y + Math.sin(rAng) * rDist,
+                            vx: -Math.cos(rAng) * 160,
+                            vy: -Math.sin(rAng) * 160,
+                            life: 0.35, color: '#f472b6', size: 3.5
+                        });
+                    }
                     if (e.stateTimer <= 0) {
                         e.actionState = 'chase';
+                        e.telegraphOffsetX = 0; e.telegraphOffsetY = 0;
                         e.tertiaryTimer = 7.5;
                         const warnTime = 0.6;
                         e.telegraphType = 'charge_nova'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#f472b6';
@@ -4703,8 +4943,9 @@ function update(dt) {
                     if (e.gimmickTimer <= 0) {
                         e.gimmickTimer = 4.8; const ang = Math.atan2(player.y - e.y, player.x - e.x), dashDist = 650, dashDur = 0.25;
                         e.dashVx = Math.cos(ang) * (dashDist / dashDur); e.dashVy = Math.sin(ang) * (dashDist / dashDur);
-                        const warnTime = 0.5;
+                        const warnTime = 1.0;
                         e.actionState = 'telegraph_dash'; e.stateTimer = warnTime; e.telegraphType = 'charge_dash'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#f472b6'; e.telegraphAngle = ang;
+                        applyItto(e);
                         const bossRef = e;
                         hazardZones.push({ 
                             type: 'line_telegraph', ownerBoss: e, x1: e.x, y1: e.y, x2: e.x + Math.cos(ang) * dashDist, y2: e.y + Math.sin(ang) * dashDist, width: 28, color: 'rgba(244, 114, 182, 0.3)', borderColor: '#f472b6', showArrow: true, life: warnTime, maxLife: warnTime,
@@ -4718,6 +4959,7 @@ function update(dt) {
                     if (e.secondaryTimer <= 0) {
                         e.secondaryTimer = 5.5; const warnTime = 0.8, bossRef = e;
                         e.telegraphType = 'charge_nova'; e.telegraphTimer = warnTime; e.telegraphMax = warnTime; e.telegraphColor = '#fb7185';
+                        applyItto(e);
                         hazardZones.push({
                             type: 'circle_telegraph', ownerBoss: e, followBoss: true, x: e.x, y: e.y, radius: 224, color: 'rgba(244, 114, 182, 0.2)', borderColor: '#fb7185', life: warnTime, maxLife: warnTime,
                             onTrigger: () => {
@@ -4731,15 +4973,17 @@ function update(dt) {
                     }
                     if (e.tertiaryTimer <= 0 && e.actionState === 'chase') {
                         e.actionState = 'prep_hyakujin';
-                        e.stateTimer = 0.5;
+                        e.stateTimer = 1.0;
                         spawnDamageText(e.x, e.y - 50, '構え...', true, '#f472b6');
                         e.tertiaryTimer = 999;
+                        applyItto(e);
                     }
                     if (e.quaternaryTimer <= 0 && e.actionState === 'chase') {
                         e.actionState = 'prep_dankai';
                         e.stateTimer = 0.5;
                         spawnDamageText(e.x, e.y - 50, '奥義の構え...', true, '#be185d');
                         e.quaternaryTimer = 999;
+                        applyItto(e);
                     }
                 }
             } else if (e.bossId === 'arachne') {
@@ -4945,6 +5189,15 @@ function update(dt) {
                     hz.tickTimer = 0.8;
                     damagePlayer(hz.damage || 8, hz.ownerBoss);
                 }
+            }
+        }
+        if (hz.type === 'darkhole_area') {
+            hz.tickTimer -= dt;
+            if (hz.tickTimer <= 0) {
+                hz.tickTimer = 0.2;
+                if (Math.hypot(player.x - hz.x, player.y - hz.y) <= hz.radius + player.radius) damagePlayer(hz.damage, hz.ownerBoss);
+                slashEffects.push({ x: hz.x, y: hz.y, radius: hz.radius, startAngle: 0, endAngle: Math.PI*2, isFullCircle: true, life: 0.15, maxLife: 0.15, color: 'rgba(126, 34, 206, 0.4)' });
+                for(let p=0; p<4; p++) particles.push(createParticle(hz.x, hz.y, '#c084fc', 0.8));
             }
         }
         if (hz.type === 'ice_pillar') {
@@ -5176,6 +5429,14 @@ function draw() {
             }
             ctx.strokeStyle = `rgba(251, 207, 232, ${0.4 * ratio})`;
             ctx.lineWidth = 1.5; ctx.stroke();
+            ctx.restore();
+        } else if (hz.type === 'darkhole_area') {
+            const ratio = Math.min(1, hz.life / hz.maxLife); 
+            ctx.save(); 
+            ctx.beginPath(); ctx.arc(hz.x, hz.y, hz.radius, 0, Math.PI * 2); 
+            ctx.fillStyle = `rgba(59, 7, 100, ${0.45 * ratio})`; ctx.fill(); 
+            ctx.lineWidth = 3; ctx.strokeStyle = `rgba(168, 85, 247, ${0.8 * ratio})`; 
+            ctx.setLineDash([8, 8]); ctx.lineDashOffset = gameTime * 50; ctx.stroke(); ctx.setLineDash([]);
             ctx.restore();
         } else if (hz.type === 'ice_pillar') {
             const ratio = Math.min(1, hz.life / 0.35);
